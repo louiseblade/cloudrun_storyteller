@@ -2,16 +2,27 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from gtts import gTTS
 import os
-from llama_cpp import Llama
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 app = Flask(__name__)
 CORS(app)
 
-# Define the mounted model path (adjust if needed based on your mount)
-MODEL_PATH = os.path.join("/app", "model", "goat-70b-storytelling.Q4_K_M.gguf")
+# Model path in the container (configurable via environment variable)
+MODEL_PATH = os.getenv("MODEL_PATH", "/app/goat_70b_local")
 
-# Initialize model with GPU support, using the mounted model path
-llm = Llama(model_path=MODEL_PATH, n_ctx=4096, n_gpu_layers=29)
+# Load tokenizer and model with PyTorch and transformers
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH,
+        torch_dtype=torch.bfloat16,  # Reduces memory usage
+        device_map="auto",           # Distributes across available GPUs/CPU
+        offload_folder="offload"     # Folder for offloaded weights
+    )
+except Exception as e:
+    app.logger.error(f"Failed to load model: {e}")
+    raise
 
 # Audio directory
 AUDIO_DIR = os.path.join(os.getcwd(), "audio")
@@ -21,7 +32,6 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 def index():
     return "GOAT-70B story generator online!"
 
-# Serve audio files statically
 @app.route('/audio/<filename>')
 def serve_audio(filename):
     return send_from_directory(AUDIO_DIR, filename)
@@ -32,24 +42,23 @@ def generate_story():
     prompt = data.get('prompt', 'Once upon a time')
 
     input_text = f"Write a short story about: {prompt}"
-
-    # Reuse the GPU-enabled model instance
-    output = llm(prompt=input_text,
-                 max_tokens=400,
-                 temperature=0.7,
-                 top_k=50,
-                 repeat_penalty=1.2,
-                 )
-
-    generated_text = output['choices'][0]['text'].strip()
+    try:
+        inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
+        outputs = model.generate(**inputs, max_length=400, num_return_sequences=1)
+        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate story: {str(e)}"}), 500
 
     # Generate TTS audio
     audio_file = os.path.join(AUDIO_DIR, "story.mp3")
-    tts = gTTS(text=generated_text, lang='en', slow=False)
-    tts.save(audio_file)
+    try:
+        tts = gTTS(text=generated_text, lang='en', slow=False)
+        tts.save(audio_file)
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate audio: {str(e)}"}), 500
 
     # Audio URL configuration
-    CLOUD_RUN_SERVICE_URL = os.getenv("CLOUD_RUN_SERVICE_URL", "http://127.0.0.1:8080")
+    CLOUD_RUN_SERVICE_URL = os.getenv("CLOUD_RUN_SERVICE_URL", request.host_url.rstrip('/'))
     audio_url = f"{CLOUD_RUN_SERVICE_URL}/audio/story.mp3"
 
     return jsonify({
@@ -58,4 +67,4 @@ def generate_story():
     })
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)), debug=False)

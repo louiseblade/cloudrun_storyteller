@@ -1,54 +1,33 @@
-# Use NVIDIA CUDA 11.8 base image
-FROM docker.io/nvidia/cuda:11.8.0-base-ubuntu22.04@sha256:f895871972c1c91eb6a896eee68468f40289395a1e58c492e1be7929d0f8703b
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    python3-pip \
-    locales \
-    ninja-build \
-    git \
-    cuda-toolkit-11-8 \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install specific CMake version 3.27.8
-RUN wget https://github.com/Kitware/CMake/releases/download/v3.27.8/cmake-3.27.8-linux-x86_64.sh -O cmake-install.sh && \
-    chmod +x cmake-install.sh && \
-    ./cmake-install.sh --skip-license --prefix=/usr/local && \
-    rm cmake-install.sh
-
-# Verify CMake version
-RUN cmake --version
-
-# Generate locale
-RUN locale-gen en_US.UTF-8
+# Use NVIDIA's CUDA base image with Ubuntu (CUDA 12.4)
+FROM nvidia/cuda:12.4.0-base-ubuntu22.04
 
 # Set working directory
 WORKDIR /app
 
-# Install Python dependencies including a pre-built llama-cpp-python wheel
-RUN python3 -m pip install --upgrade pip && \
-    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu118 && \
-    pip install --no-cache-dir "llama-cpp-python[cuda]" --extra-index-url https://abetlen.github.io/llama-cpp-python-cuBLAS-wheels/
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy application code (if any)
+# Install PyTorch with CUDA 12.4 support
+RUN pip3 install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --extra-index-url https://download.pytorch.org/whl/cu124
+
+# Install other Python dependencies
+RUN pip3 install flask flask-cors gtts transformers accelerate
+
+# Copy the Flask app
 COPY app.py .
 
-# Create appuser
-RUN useradd -m -s /bin/bash appuser
+# Create directories for audio and offload (model will be mounted)
+RUN mkdir -p /app/audio /app/offload /app/goat_70b_local
 
-# Change ownership to appuser
-RUN chown -R appuser:appuser /app
-
-# Set the user to appuser for runtime
-USER appuser
-
-# Expose port (if needed by your app)
+# Expose the port Cloud Run expects
 EXPOSE 8080
 
-# Run the application (adjust command if needed)
+# Set environment variables
+ENV PORT=8080
+ENV MODEL_PATH=/app/goat_70b_local
+
+# Start the Flask app
 CMD ["python3", "app.py"]

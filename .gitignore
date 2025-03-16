@@ -1,0 +1,11 @@
+# Ignore the large model file
+goat-70b-storytelling.Q4_K_M.gguuf
+
+# Ignore other large files or patterns (optional)
+*.gguuf
+
+# Ignore IDE files (optional)
+.idea/
+
+# Ignore cache (optional)
+.cache/

@@ -1,0 +1,7 @@
+--add-volume:
+  name: model-volume
+  type: cloud-storage
+  bucket: jollysunbro_bucket
+--add-volume-mount:
+  volume: model-volume
+  mount-path: /app/goat_70b_local
